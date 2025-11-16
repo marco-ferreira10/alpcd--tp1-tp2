@@ -8,7 +8,7 @@ from typing_extensions import Annotated
 from datetime import datetime
 
 
-API_KEY = "COLOCA_AQUI_A_TUA_API_KEY"
+API_KEY = "e6ef9d45d5928e071f7ff064506937dc"
 
 BASE_URL = "http://api.sandbox.itjobs.pt"
 
