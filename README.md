@@ -94,3 +94,6 @@ Formato da resposta:
     ]
 
 *(Valores são apenas estruturais — não correspondem a um anúncio real.)*
+
+## Versão
+TP1 — Ano Letivo 2025/2026 — ALPCD
