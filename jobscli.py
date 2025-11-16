@@ -98,18 +98,18 @@ def _normalize_text(html_text: str) -> str:
 
 
 def _get(endpoint: str, params: dict) -> dict:
-    """
-    Faz pedido GET à API, já com api_key e tratamento de erros.
-    endpoint: string do tipo "/job/list.json" ou similar (sem BASE_URL).
-    """
+   
     _check_api_key()
-
-    url = f"{BASE_URL}{endpoint}"
-    merged_params = dict(params)
-    merged_params["api_key"] = API_KEY
+    user_agent = {"User-Agent": "Mozilla/5.0"}
+    base = f"{BASE_URL}{endpoint}"
+    parametros = "&".join(f"{k}={v}" for k, v in params.items())
+    url_final = f"{base}?api_key={API_KEY}"
+    
+    if parametros:
+        url_final += f"&{parametros}"
 
     try:
-        response = requests.get(url, params=merged_params, timeout=10)
+        response = requests.get(url_final, headers=user_agent, timeout=10)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         print(f"Erro ao contactar a API: {e}", file=sys.stderr)
@@ -118,7 +118,7 @@ def _get(endpoint: str, params: dict) -> dict:
     try:
         data = response.json()
     except json.JSONDecodeError:
-        print("Erro: a resposta da API não é JSON válido.", file=sys.stderr)
+        print("Erro: resposta da API não é JSON válido.", file=sys.stderr)
         raise typer.Exit(code=1)
 
     if isinstance(data, dict) and "error" in data:
