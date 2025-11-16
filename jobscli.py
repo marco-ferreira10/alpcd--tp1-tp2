@@ -162,32 +162,54 @@ def search_jobs(
     export_csv: Annotated[str | None, typer.Option(help="Exportar o resultado para um ficheiro CSV.")] = None,
 ):
     """
-    Alínea (b): trabalhos part-time, de uma empresa, numa localidade.
-    Exemplo do enunciado: python jobscli.py search Porto EmpresaY 3
+    Alínea (b): listar trabalhos PART-TIME, de uma EMPRESA, numa LOCALIDADE.
+
+    Implementação:
+    - usa /job/list.json com type=2 (Part-time)  :contentReference[oaicite:1]{index=1}
+    - filtra em Python por nome de empresa e localidade
     """
-    loc_id = LOCATION_IDS.get(localidade.lower())
-    if loc_id is None:
-        print("Erro: localidade não reconhecida para a API.", file=sys.stderr)
-        raise typer.Exit(code=1)
+    localidade_norm = localidade.strip().lower()
+    empresa_norm = empresa.strip().lower()
 
-    params = {
-        "q": empresa,
-        "type": TYPE_PART_TIME,
-        "location": loc_id,
-        "limit": n,
-    }
+    encontrados: list[dict] = []
+    page = 1
+    limit_por_pagina = 50
 
-    data = _get("/job/search.json", params)
-    jobs = data.get("results", [])
+    while len(encontrados) < n:
+        data = _get("/job/list.json", {"type": TYPE_PART_TIME, "limit": limit_por_pagina, "page": page})
+        jobs = data.get("results", [])
+        if not jobs:
+            break
 
-    if not jobs:
+        for job in jobs:
+            if len(encontrados) >= n:
+                break
+
+            company = job.get("company") or {}
+            nome_empresa = (company.get("name") or "").lower()
+            if empresa_norm not in nome_empresa:
+                continue
+
+            locations = job.get("locations") or []
+            tem_localidade = any(
+                localidade_norm in (loc.get("name") or "").lower()
+                for loc in locations
+            )
+            if not tem_localidade:
+                continue
+
+            encontrados.append(job)
+
+        page += 1
+
+    if not encontrados:
         print("Nenhum trabalho encontrado para os critérios.")
         return
 
     if export_csv:
-        _write_to_csv(export_csv, jobs)
+        _write_to_csv(export_csv, encontrados)
     else:
-        print(json.dumps(jobs, indent=2, ensure_ascii=False))
+        print(json.dumps(encontrados, indent=2, ensure_ascii=False))
 
 
 @app.command(name="type", help="Extrai o regime de trabalho (remoto/híbrido/presencial/outro) de um job ID. [Alínea c]")
