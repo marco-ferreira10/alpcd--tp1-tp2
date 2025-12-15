@@ -6,6 +6,7 @@ import sys
 import re
 from typing_extensions import Annotated
 from datetime import datetime
+from bs4 import BeautifulSoup
 
 
 API_KEY = "e6ef9d45d5928e071f7ff064506937dc"
