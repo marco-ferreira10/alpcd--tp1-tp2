@@ -6,12 +6,10 @@ import sys
 import re
 from typing_extensions import Annotated
 from datetime import datetime
-
+from bs4 import BeautifulSoup
 
 API_KEY = "e6ef9d45d5928e071f7ff064506937dc"
-
 BASE_URL = "http://api.sandbox.itjobs.pt"
-
 
 TYPE_PART_TIME = 2
 
@@ -46,20 +44,18 @@ LISTA_SKILLS = [
 
 app = typer.Typer(help="CLI para interagir com a API de empregos do ITJobs.")
 
+TEAMLYZER_BASE = "https://pt.teamlyzer.com"
+TEAMLYZER_UA = {"User-Agent": "Mozilla/5.0"}
+
 
 def _check_api_key():
-    if not API_KEY or API_KEY == "COLOCA_AQUI_A_TUA_API_KEY":
+    if not API_KEY:
         print("Erro: define a API_KEY no ficheiro jobscli.py.", file=sys.stderr)
         raise typer.Exit(code=1)
 
 
 def _write_to_csv(filename: str, job_list: list):
-    """
-    Escreve uma lista de trabalhos num ficheiro CSV.
-    Campos: titulo, empresa, descrição, data de publicação, salário, localização.
-    """
     headers = ["titulo", "empresa", "descrição", "data de publicação", "salário", "localização"]
-
     try:
         with open(filename, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=headers)
@@ -81,15 +77,11 @@ def _write_to_csv(filename: str, job_list: list):
                 writer.writerow(row)
 
         print(f"Dados exportados com sucesso para {filename}")
-
     except IOError as e:
         print(f"Erro ao escrever no ficheiro CSV: {e}", file=sys.stderr)
 
 
 def _normalize_text(html_text: str) -> str:
-    """
-    Remove tags HTML simples e passa a minúsculas, para facilitar regex.
-    """
     if html_text is None:
         html_text = ""
     text = re.sub(r"<[^>]+>", " ", html_text)
@@ -98,13 +90,11 @@ def _normalize_text(html_text: str) -> str:
 
 
 def _get(endpoint: str, params: dict) -> dict:
-   
     _check_api_key()
     user_agent = {"User-Agent": "Mozilla/5.0"}
     base = f"{BASE_URL}{endpoint}"
     parametros = "&".join(f"{k}={v}" for k, v in params.items())
     url_final = f"{base}?api_key={API_KEY}"
-    
     if parametros:
         url_final += f"&{parametros}"
 
@@ -129,45 +119,111 @@ def _get(endpoint: str, params: dict) -> dict:
     return data
 
 
-@app.command(name="top", help="Lista os N trabalhos mais recentes. [Alínea a]")
+def _slugify_teamlyzer(name: str) -> str:
+    s = name.lower().strip()
+    s = re.sub(r"[^\w\s-]", "", s)
+    s = re.sub(r"\s+", "-", s)
+    return s
+
+
+def _teamlyzer_fetch_company_page(slug: str) -> str | None:
+    try:
+        r = requests.get(f"{TEAMLYZER_BASE}/companies/{slug}", headers=TEAMLYZER_UA, timeout=10)
+        return r.text if r.status_code == 200 else None
+    except requests.exceptions.RequestException:
+        return None
+
+
+def _teamlyzer_fetch_benefits_page(slug: str) -> str | None:
+    try:
+        r = requests.get(f"{TEAMLYZER_BASE}/companies/{slug}/benefits-and-values", headers=TEAMLYZER_UA, timeout=10)
+        return r.text if r.status_code == 200 else None
+    except requests.exceptions.RequestException:
+        return None
+
+
+def _teamlyzer_parse_company_info(company_html: str, benefits_html: str | None) -> dict:
+    soup = BeautifulSoup(company_html, "html.parser")
+    text = soup.get_text("\n", strip=True)
+
+    rating = None
+    m = re.search(r"\b(\d+(?:\.\d+)?)\s*/\s*5\b", text)
+    if m:
+        rating = float(m.group(1))
+
+    salary = None
+    m = re.search(r"(\d[\d\.\s]*€)\s*-\s*(\d[\d\.\s]*€)", text)
+    if m:
+        salary = f"{m.group(1).strip()} - {m.group(2).strip()}"
+
+    description = None
+    long_lines = [ln for ln in text.split("\n") if len(ln) >= 80]
+    if long_lines:
+        description = long_lines[0]
+
+    benefits = []
+
+    if benefits_html:
+        bsoup = BeautifulSoup(benefits_html, "html.parser")
+        lines = [ln.strip() for ln in bsoup.get_text("\n", strip=True).split("\n")]
+
+        invalid_exact = {
+            "toggle navigation", "nova review", "procurar reviews",
+            "novo!", "conteúdo", "comparar"
+        }
+
+        invalid_contains = [
+            "teamlyzer", "vagas", "notícias", "head2head",
+            "indústrias", "calculadora", "empresas",
+            "ranking", "explorar", "tools",
+            "prémios", "despedimentos", "trainees"
+        ]
+
+        for ln in lines:
+            low = ln.lower()
+
+            if not (8 <= len(ln) <= 60):
+                continue
+            if low in invalid_exact:
+                continue
+            if any(s in low for s in invalid_contains):
+                continue
+
+            benefits.append(ln)
+
+        benefits = list(dict.fromkeys(benefits))[:5]
+
+    return {
+        "teamlyzer_rating": rating,
+        "teamlyzer_description": description,
+        "teamlyzer_benefits": benefits,
+        "teamlyzer_salary": salary,
+    }
+
+
+@app.command(name="top", help="Lista os N trabalhos mais recentes.")
 def get_top_jobs(
     n: Annotated[int, typer.Argument(help="Número de trabalhos a listar.")],
     export_csv: Annotated[str | None, typer.Option(help="Exportar o resultado para um ficheiro CSV.")] = None,
 ):
-    """
-    Alínea (a): Listar os N trabalhos mais recentes (JSON; CSV opcional).
-    Exemplo: python jobscli.py top 30 --export-csv top.csv
-    """
     data = _get("/job/list.json", {"limit": n})
     jobs = data.get("results", [])
-
     if not jobs:
         print("Nenhum trabalho encontrado para os critérios.")
         return
-
     if export_csv:
         _write_to_csv(export_csv, jobs)
     else:
         print(json.dumps(jobs, indent=2, ensure_ascii=False))
 
 
-@app.command(
-    name="search",
-    help="Lista trabalhos part-time de uma empresa numa localidade. [Alínea b]",
-)
+@app.command(name="search", help="Lista trabalhos part-time de uma empresa numa localidade.")
 def search_jobs(
     localidade: Annotated[str, typer.Argument(help="Localidade (ex: Porto, Lisboa).")],
     empresa: Annotated[str, typer.Argument(help="Nome da empresa a pesquisar.")],
     n: Annotated[int, typer.Argument(help="Número máximo de trabalhos a mostrar.")],
     export_csv: Annotated[str | None, typer.Option(help="Exportar o resultado para um ficheiro CSV.")] = None,
 ):
-    """
-    Alínea (b): listar trabalhos PART-TIME, de uma EMPRESA, numa LOCALIDADE.
-
-    Implementação:
-    - usa /job/list.json com type=2 (Part-time)  :contentReference[oaicite:1]{index=1}
-    - filtra em Python por nome de empresa e localidade
-    """
     localidade_norm = localidade.strip().lower()
     empresa_norm = empresa.strip().lower()
 
@@ -191,10 +247,7 @@ def search_jobs(
                 continue
 
             locations = job.get("locations") or []
-            tem_localidade = any(
-                localidade_norm in (loc.get("name") or "").lower()
-                for loc in locations
-            )
+            tem_localidade = any(localidade_norm in (loc.get("name") or "").lower() for loc in locations)
             if not tem_localidade:
                 continue
 
@@ -212,14 +265,10 @@ def search_jobs(
         print(json.dumps(encontrados, indent=2, ensure_ascii=False))
 
 
-@app.command(name="type", help="Extrai o regime de trabalho (remoto/híbrido/presencial/outro) de um job ID. [Alínea c]")
+@app.command(name="type", help="Extrai o regime de trabalho (remoto/híbrido/presencial/outro) de um job ID.")
 def get_job_type(
-    job_id: Annotated[int, typer.Argument(help="ID interno do trabalho (ex: 125378).")],
+    job_id: Annotated[int, typer.Argument(help="ID interno do trabalho.")],
 ):
-    """
-    Alínea (c): Extrair regime de trabalho de um job id.
-    Usa campo allowRemote e expressões regulares sobre title/body/location.
-    """
     job_data = _get("/job/get.json", {"id": job_id})
 
     text_to_search = " ".join([
@@ -227,10 +276,9 @@ def get_job_type(
         job_data.get("body", ""),
         " ".join(loc.get("name", "") for loc in job_data.get("locations", []) or []),
     ])
-
     text_norm = _normalize_text(text_to_search)
 
-    allow_remote = bool(job_data.get("allowRemote:") or job_data.get("allowRemote"))
+    allow_remote = bool(job_data.get("allowRemote"))
 
     padrao_hibrido = r"\b(h[íi]brido|hybrid)\b"
     padrao_remoto = r"\b(remoto|remote|teletrabalho|work from home|wfh)\b"
@@ -254,16 +302,11 @@ def get_job_type(
         print("Outro (ou não especificado)")
 
 
-@app.command(name="skills", help="Conta skills em anúncios entre duas datas (YYYY-MM-DD). [Alínea d]")
+@app.command(name="skills", help="Conta skills em anúncios entre duas datas (YYYY-MM-DD).")
 def count_skills_by_date(
     data_inicial: Annotated[str, typer.Argument(help="Data inicial (YYYY-MM-DD).")],
     data_final: Annotated[str, typer.Argument(help="Data final (YYYY-MM-DD).")],
 ):
-    """
-    Alínea (d): Contar ocorrências de skills nas descrições entre duas datas.
-    Output: lista JSON ordenada por número de ocorrências desc.
-    Exemplo: python jobscli.py skills 2025-01-01 2025-01-31
-    """
     try:
         dt_start = datetime.strptime(data_inicial, "%Y-%m-%d")
         dt_end = datetime.strptime(data_final, "%Y-%m-%d")
@@ -332,5 +375,38 @@ def count_skills_by_date(
     print(json.dumps(lista_ordenada, indent=2, ensure_ascii=False))
 
 
+@app.command(name="get", help="Obtém detalhes de um trabalho e tenta adicionar dados do Teamlyzer.")
+def get_job_with_teamlyzer(
+    job_id: Annotated[int, typer.Argument(help="ID do trabalho.")],
+):
+    job = _get("/job/get.json", {"id": job_id})
+
+    company = job.get("company") or {}
+    company_name = company.get("name")
+    if not company_name:
+        job.update({
+            "teamlyzer_rating": None,
+            "teamlyzer_description": None,
+            "teamlyzer_benefits": [],
+            "teamlyzer_salary": None,
+        })
+        print(json.dumps(job, indent=2, ensure_ascii=False))
+        return
+
+    slug = _slugify_teamlyzer(company_name)
+    html = _teamlyzer_fetch_company_page(slug)
+    benefits_html = _teamlyzer_fetch_benefits_page(slug) if html else None
+
+    if html:
+        job.update(_teamlyzer_parse_company_info(html, benefits_html))
+    else:
+        job.update({
+            "teamlyzer_rating": None,
+            "teamlyzer_description": None,
+            "teamlyzer_benefits": [],
+            "teamlyzer_salary": None,
+        })
+
+    print(json.dumps(job, indent=2, ensure_ascii=False))
 if __name__ == "__main__":
     app()
