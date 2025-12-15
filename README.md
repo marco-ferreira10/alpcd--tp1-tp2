@@ -1,4 +1,4 @@
-# ALPCD — Trabalho Prático 1
+# ALPCD — Trabalho Prático 1 e 2
 
 CLI em Python para interação com a API de ofertas de emprego do [itjobs.pt](https://www.itjobs.pt/api/docs).
 
@@ -96,4 +96,4 @@ Formato da resposta:
 *(Valores são apenas estruturais — não correspondem a um anúncio real.)*
 
 ## Versão
-TP1 — Ano Letivo 2025/2026 — ALPCD
+TP 1/2 — Ano Letivo 2025/2026 — ALPCD
