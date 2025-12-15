@@ -408,5 +408,7 @@ def get_job_with_teamlyzer(
         })
 
     print(json.dumps(job, indent=2, ensure_ascii=False))
+
+
 if __name__ == "__main__":
     app()
